@@ -1,0 +1,5 @@
+#+title: Readme
+
+A small package for creating det maps of pixel groups from beam map data.
+
+See ~examples/Example Det Map Creation.ipynb~ for an example of this.
