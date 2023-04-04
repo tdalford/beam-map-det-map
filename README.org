@@ -1,4 +1,4 @@
-#+title: Readme
+#+title: beam-map-det-map
 
 A small package for creating det maps of pixel groups from beam map data.
 
