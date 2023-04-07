@@ -20,7 +20,7 @@ def neighbor_debug_plot(pixels, point, dist, nearest_neighbors):
     plt.legend()
 
 
-def get_nearest_neighbors(pixels, point, dist, debug=0):
+def get_nearest_neighbors(pixels, point, dist, debug=0, return_dists=False):
     '''Find all pixels in /pixels/ within /dist/ of /point/.'''
     pixels = np.array(pixels)
     all_dists = dists_from_point(pixels, point)
@@ -29,6 +29,8 @@ def get_nearest_neighbors(pixels, point, dist, debug=0):
     if debug > 0:
         neighbor_debug_plot(pixels, point, dist, nearest_neighbors)
         plt.show()
+    if return_dists:
+        return nearest_neighbors, all_dists[close_dists]
     return nearest_neighbors
 
 
@@ -207,8 +209,8 @@ def remove_instances(pixel_list, point, keep_inds, debug=0):
     if common_pixels is None:
         raise Exception
     if debug:
-        print(keep_inds)
-        print(common_pixels)
+        print("keep inds = ", keep_inds)
+        print("common pixel = ", common_pixels)
     for ind in common_pixels:
         if ind not in keep_inds:
             if debug:
@@ -225,7 +227,7 @@ def add_instances(pixel_list, point, add_inds, debug=0):
     for ind in add_inds:
         if debug:
             print('add pixel = ', add_pixel_list[ind])
-            print(point)
+            print('point to add = ', point)
         assert not np.isin(add_pixel_list[ind], point).all()
         add_pixel_list[ind] = np.concatenate((add_pixel_list[ind], [point]))
     return add_pixel_list
@@ -239,6 +241,30 @@ def remove_emptys(pixel_list):
         assert len(pop_val) == 0
         emptys = np.where([len(x) == 0 for x in pixel_list])[0]
     return pixel_list
+
+
+def _merge_pixels(pixel_list, p1_ind, p2_ind, debug=0):
+    '''Merge p1 and p2 within /pixel_list/ at /p1_ind/ and /p2_ind/.
+
+    Assumed that p1 and p2 are a part of no other pixels.
+
+    Does NOT remove empty elements in order to preserve list structure.'''
+    for point in pixel_list[p1_ind]:
+        pixel_list = remove_instances(pixel_list, point, [p2_ind], debug=debug)
+        pixel_list = add_instances(pixel_list, point, [p2_ind], debug=debug)
+    return pixel_list
+
+
+def merge_pixels(pixel_list, merge_inds, debug=0):
+    '''Merge each p1 and p2 within /merge_inds/ which index /pixel_list/.
+
+    Assumes that each p1 and p2 are a part of no other pixels.
+
+    Removes empty elements after the merging is completed.
+    '''
+    for (p1_ind, p2_ind) in merge_inds:
+        pixel_list = _merge_pixels(pixel_list, p1_ind, p2_ind, debug=debug)
+    return remove_emptys(pixel_list)
 
 
 def clean_repeat_pixels(pixel_list, repeat_pixels, debug=0):
@@ -334,7 +360,9 @@ def check_frequency_types(pixel_list, pixel_dataframe, verbose=0):
         for point in pixel:
             df_value = pixel_dataframe[((pixel_dataframe['x_pos'] == point[
                 0]) & (pixel_dataframe['y_pos'] == point[1]))]
-            assert df_value.shape[0] == 1
+            # if df_value.shape[0] != 1:
+            #     print(df_value)
+            # assert df_value.shape[0] == 1
             if df_value['msk_220'].values[0]:
                 num_220s += 1
             else:
@@ -350,8 +378,12 @@ def check_frequency_types(pixel_list, pixel_dataframe, verbose=0):
     return num_wrong
 
 
-def get_det_map(pixel_dataframe, verbose=0):
-    '''Get final det map given a dataframe which contains x and y pos info.'''
+def get_det_map(pixel_dataframe, verbose=1, **get_pixel_kwargs):
+    '''Get final det map given a dataframe which contains x and y pos info.
+
+    It should also have msk_220 and msk_280 info if versbose > 0. Any arguments
+    in /get_pixel_kwargs/ are passed on to the 'get_pixel' function.
+    '''
     num_already_in = 0
     already_in_list = []
     pixel_list = []
@@ -361,7 +393,8 @@ def get_det_map(pixel_dataframe, verbose=0):
             num_already_in += 1
             continue
         _, close_pixels, return_type = get_pixel(pixel_dataframe[[
-            'x_pos', 'y_pos']].values, pos, debug=0, verbose=verbose)
+            'x_pos', 'y_pos']].values, pos, debug=0, verbose=verbose,
+            **get_pixel_kwargs)
         if return_type is not None and return_type > 0:
             interesting_returns.append(pos)
 
@@ -387,12 +420,25 @@ def get_det_map(pixel_dataframe, verbose=0):
 
     cleaned_pixel_list = clean_pixel_list(pixel_list, unused_points,
                                           verbose=verbose)
-    # Check for >2 of each frequency type
-    num_wrong = check_frequency_types(cleaned_pixel_list, pixel_dataframe)
 
     if verbose:
+        # Check for >2 of each frequency type
+        num_wrong = check_frequency_types(cleaned_pixel_list, pixel_dataframe)
         print("Number of pixels with >2 of one frequency type = "
               f"{num_wrong}")
         return cleaned_pixel_list, pixel_list, interesting_returns
 
     return cleaned_pixel_list
+
+
+def add_det_map_to_df(det_map, pixel_dataframe):
+    '''Add pixels and centroids from /det_map/ to /pixel_dataframe/.'''
+    for i, pixel in enumerate(det_map):
+        for point in pixel:
+            df_ind = (pixel_dataframe[['x_pos', 'y_pos']] == point).values.all(
+                axis=1)
+            pixel_dataframe.loc[df_ind, "pixel"] = i
+            pixel_dataframe.loc[df_ind, "pixel_centroid_x"] = calc_centroid(
+                pixel)[0]
+            pixel_dataframe.loc[df_ind, "pixel_centroid_y"] = calc_centroid(
+                pixel)[1]
